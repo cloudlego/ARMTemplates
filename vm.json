@@ -1,0 +1,253 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location":{
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]"
+        },
+        "subnetName": {
+            "type": "string"
+        },
+        "virtualNetworkName": {
+            "type": "string"
+        },
+        "publicIpAddressType": {
+            "type": "string",
+            "defaultValue": "Dynamic",
+            "allowedValues": [
+                "Dynamic",
+                "Static"
+            ]
+        },
+        "publicIpAddressSku": {
+            "type": "string",
+            "defaultValue": "Basic"
+        },
+        "vmName": {
+            "type": "string"
+        },
+        "osDiskType": {
+            "type": "string",
+            "defaultValue": "Premium_LRS",
+            "allowedValues": [
+                "Premium_LRS",
+                "StandardSSD_LRS",
+                "Standard_LRS"
+            ]
+        },
+        "osDiskSizeGB": {
+            "type": "int",
+            "defaultValue": 127
+        },
+        "virtualMachineSize": {
+            "type": "string",
+            "defaultValue": "Standard_D2s_v3",
+            "allowedValues": [
+                "Standard_D2s_v3",
+                "Standard_DS12_v2",
+                "Standard_E2s_v3"
+            ]
+        },
+        "adminUsername": {
+            "type": "string",
+            "defaultValue": "sysadmin"
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "defaultValue": "Password@2019"
+        },
+        "imagePublisher":{
+            "type": "string",
+            "defaultValue": "RedHat",
+            "allowedValues": [
+                "RedHat",
+                "Canonical",
+                "MicrosoftWindowsServer"
+            ]
+        },
+        "imageOffer":{
+            "type": "string",
+            "defaultValue": "RHEL",
+            "allowedValues": [
+                "RHEL",
+                "WindowsServer",
+                "UbuntuServer"
+            ]
+        },
+        "imageSku":{
+            "type": "string",
+            "defaultValue": "7.4",
+            "allowedValues": [
+                "7.4",
+                "18.04-LTS",
+                "2012-R2-Datacenter",
+                "2016-Datacenter"
+            ]
+        },
+        "imageVersion":{
+            "type": "string",
+            "defaultValue": "latest"
+        },
+        "dataDiskSizeInGB":{
+            "type": "array",
+            "defaultValue": [60,120]
+        },
+        "availabilitySetID":{
+            "type": "string",
+            "defaultValue": "null"
+        },
+        "enableDiagnostic":{
+            "type": "string",
+            "defaultValue": "no",
+            "allowedValues": ["yes","no"]
+        },
+        "diagnosticsStorageAccountName": {
+            "type": "string",
+            "defaultValue": "null"
+        },
+        "adminPublicKey":{
+            "type": "securestring"
+        },
+        "disablePasswordLinux":{
+            "type": "bool",
+            "metadata": {
+                "Description": "To determine if password authentication should be disabled or not in linux machine. Set it true for windows machine"
+            }
+        }
+    },
+    "variables": {
+        "vnetId": "[resourceId(resourceGroup().name,'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+        "subnetRef": "[concat(variables('vnetId'), '/subnets/', parameters('subnetName'))]",
+        "nicName": "[concat(parameters('vmName'), '_NIC')]",
+        "pipName": "[concat(parameters('vmName'),'_PIP')]",
+        "bootDiagnostic":{
+            "bootDiagnostics": {
+                "enabled": true,
+                "storageUri": "[concat('https://', parameters('diagnosticsStorageAccountName'), '.blob.core.windows.net/')]"
+            }
+        },
+        "linuxConfiguration": {
+            "disablePasswordAuthentication": "[parameters('disablePasswordLinux')]",
+            "ssh": {
+                "publicKeys": [
+                    {
+                        "path": "[concat('/home/', parameters('adminUsername'), '/.ssh/authorized_keys')]",
+                        "keyData": "[parameters('adminPublicKey')]"
+                    }
+                ]
+            }
+        },
+        "availabilitySetID":{
+            "id": "[parameters('availabilitySetID')]"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/publicIpAddresses",
+            "sku": {
+                "name": "[parameters('publicIpAddressSku')]"
+            },
+            "name": "[variables('pipName')]",
+            "apiVersion": "2018-08-01",
+            "location": "[parameters('location')]",
+            "tags": {},
+            "properties": {
+                "publicIpAllocationMethod": "[parameters('publicIpAddressType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[variables('nicName')]",
+            "apiVersion": "2018-10-01",
+            "location": "[parameters('location')]",
+            "tags": {},
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "publicIpAddress": {
+                                "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/publicIpAddresses',variables('pipName'))]"
+                            }
+                        }
+                    }
+                ]
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIpAddresses/', variables('pipName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[trim(parameters('vmName'))]",
+            "apiVersion": "2018-06-01",
+            "location": "[parameters('location')]",
+            "tags": {},
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "copy": [
+                        {
+                            "name": "dataDisks",
+                            "count": "[length(parameters('dataDiskSizeInGB'))]",
+                            "input": {
+                                "lun": "[copyIndex('dataDisks')]",
+                                "name": "[concat(parameters('vmName'),'_DISK_',copyIndex('DataDisks'))]",
+                                "diskSizeGB": "[parameters('dataDiskSizeInGB')[copyIndex('dataDisks')]]",
+                                "createOption": "Empty",
+                                "managedDisk": {
+                                    "storageAccountType": "[parameters('osDiskType')]"
+                                }
+                            }
+                        }
+                    ],
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "name": "[concat(parameters('vmName'),'_OSDISK')]",
+                        "managedDisk": {
+                            "storageAccountType": "[parameters('osDiskType')]"
+                        },
+                        "diskSizeGB": "[if(equals(parameters('imagePublisher'),'MicrosoftWindowsServer'),127,parameters('osDiskSizeGB'))]"
+                    },
+                    "imageReference": {
+                        "publisher": "[parameters('imagePublisher')]",
+                        "offer": "[parameters('imageOffer')]",
+                        "sku": "[parameters('imageSku')]",
+                        "version": "[parameters('imageVersion')]"
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces',variables('nicName'))]"
+                        }
+                    ]
+                },
+                "osProfile": {
+                    "computerName": "[trim(parameters('vmName'))]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "linuxConfiguration": "[if(and(not(equals(parameters('imagePublisher'),'MicrosoftWindowsServer')),not(equals(parameters('adminPublicKey'),'null'))),variables('linuxConfiguration'),json('null'))]"
+                },
+                "diagnosticsProfile": "[if(equals(parameters('enableDiagnostic'),'yes'),variables('bootDiagnostic'),json('null'))]",
+                "availabilitySet": "[if(equals(parameters('availabilitySetID'),'null'),json('null'),variables('availabilitySetID'))]"
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('nicName'))]"
+            ]
+        }
+    ],
+    "outputs": {
+        "virtualMachineName": {
+            "type": "string",
+            "value": "[parameters('vmName')]"
+        }
+    }
+}
